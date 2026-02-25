@@ -1,0 +1,33 @@
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  role      String
+  student   Student?
+  createdAt DateTime @default(now())
+}
+
+model Student {
+  id           Int    @id @default(autoincrement())
+  userId       Int    @unique
+  user         User   @relation(fields: [userId], references: [id])
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  specialiteId Int?
+  specialite   Specialite? @relation(fields: [specialiteId], references: [id])
+}
+
+model Department {
+  id        Int         @id @default(autoincrement())
+  name      String
+  students  Student[]
+  specialites Specialite[]
+}
+
+model Specialite {
+  id          Int      @id @default(autoincrement())
+  name        String
+  departmentId Int
+  department  Department @relation(fields: [departmentId], references: [id])
+  students    Student[]
+}
