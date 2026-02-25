@@ -1,15 +1,66 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  DELEGATE
+  TEACHER
+  SPECIALITE_CHEF
+  DEPARTEMENT_CHEF
+  ADMIN_FACULTY
+  ADMIN_SUPER
+  ASSIGNMENT_MANAGER
+  COMMITTEE_MEMBER
+  COMMITTEE_PRESIDENT
+}
+
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  role      String
-  student   Student?
+  id                    String               @id @default(cuid())
+  email                 String               @unique
+  password              String
+  firstName             String
+  lastName              String
+  role                  Role                 @default(STUDENT)
+  isActive              Boolean              @default(true)
+  profileImage          String?
+  lastLogin             DateTime?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  student               Student?
+  refreshTokens         RefreshToken[]
+  passwordResetTokens   PasswordResetToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
   createdAt DateTime @default(now())
+  revoked   Boolean  @default(false)
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  used      Boolean  @default(false)
 }
 
 model Student {
   id           Int    @id @default(autoincrement())
-  userId       Int    @unique
+  userId       String @unique
   user         User   @relation(fields: [userId], references: [id])
   departmentId Int?
   department   Department? @relation(fields: [departmentId], references: [id])
@@ -18,16 +69,16 @@ model Student {
 }
 
 model Department {
-  id        Int         @id @default(autoincrement())
-  name      String
-  students  Student[]
+  id          Int         @id @default(autoincrement())
+  name        String
+  students    Student[]
   specialites Specialite[]
 }
 
 model Specialite {
-  id          Int      @id @default(autoincrement())
-  name        String
+  id           Int        @id @default(autoincrement())
+  name         String
   departmentId Int
-  department  Department @relation(fields: [departmentId], references: [id])
-  students    Student[]
+  department   Department @relation(fields: [departmentId], references: [id])
+  students     Student[]
 }
