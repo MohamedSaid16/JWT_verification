@@ -23,7 +23,7 @@ It provides authentication, email verification, refresh tokens, and role-based u
 ### Installation
 
 ```bash
-git clone https://github.com/MohamedSaid16/university-platform.git
+git clone https://github.com/MohamedSaid16/JWT_verification.git
 cd university-platform/backend
 npm install
 ```
