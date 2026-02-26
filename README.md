@@ -1,7 +1,7 @@
 ## Backend
 
 This backend is a Node.js + TypeScript API built with **Express** and **Prisma**.  
-It provides authentication, email verification, refresh tokens, and role-based user management for the university platform.
+It provides authentication, email verification, refresh tokens, and role-based user management for the JWT verification platform.
 
 ### Tech Stack
 - **Node.js** + **TypeScript**
@@ -24,15 +24,62 @@ It provides authentication, email verification, refresh tokens, and role-based u
 
 ```bash
 git clone https://github.com/MohamedSaid16/JWT_verification.git
-cd university-platform/backend
+cd university-platform && cd backend
 npm install
+```
+
+---
+
+### Additional Dependencies (Manual Install)
+
+```bash
+# Prisma ORM
+npm install @prisma/client@6 prisma@6 --save-dev
+
+# Express and middleware
+npm install express cors cookie-parser
+
+# Authentication
+npm install bcryptjs jsonwebtoken
+
+# Validation
+npm install express-validator
+
+# Environment variables
+npm install dotenv
+
+# Rate limiting
+npm install express-rate-limit
+
+# Email
+npm install nodemailer
+
+# Time utility (ms)
+npm install ms
+
+# TypeScript
+npm install -D typescript ts-node nodemon
+
+# TypeScript types
+npm install -D @types/node
+npm install -D @types/express
+npm install -D @types/cors
+npm install -D @types/cookie-parser
+npm install -D @types/bcryptjs
+npm install -D @types/jsonwebtoken
+npm install -D @types/ms
+npm install -D @types/nodemailer
+npm install -D @types/express-rate-limit
+
+# Additional tools
+npm install -D cross-env
 ```
 
 ---
 
 ### Environment Variables
 
-Create a `.env` file in `/backend`:
+Create a `.env` file in the project root:
 
 ```
 DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/university-db?schema=public
