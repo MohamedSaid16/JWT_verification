@@ -1,33 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  DELEGATE
+  TEACHER
+  SPECIALITE_CHEF
+  DEPARTEMENT_CHEF
+  ADMIN_FACULTY
+  ADMIN_SUPER
+  ASSIGNMENT_MANAGER
+  COMMITTEE_MEMBER
+  COMMITTEE_PRESIDENT
+}
+
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  role      String
-  student   Student?
-  createdAt DateTime @default(now())
+  id                   String   @id @default(cuid())
+  email                String   @unique
+  password             String
+  firstName            String
+  lastName             String
+  role                 Role     @default(STUDENT)
+  
+  // Relations
+  student              Student?
+  tokens               RefreshToken[]
+  emailVerification    EmailVerificationToken?
+
+  // Security fields
+  emailVerified        Boolean  @default(false)
+  failedLoginAttempts  Int      @default(0)
+  lockUntil            DateTime?
+  lastLogin            DateTime?
+
+  // Timestamps
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model RefreshToken {
+  id                String   @id @default(cuid())
+  userId            String
+  tokenHash         String   @unique
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  createdAt         DateTime @default(now())
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model EmailVerificationToken {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Student {
-  id           Int    @id @default(autoincrement())
-  userId       Int    @unique
-  user         User   @relation(fields: [userId], references: [id])
-  departmentId Int?
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  user         User      @relation(fields: [userId], references: [id])
+
+  departmentId String?
   department   Department? @relation(fields: [departmentId], references: [id])
-  specialiteId Int?
+
+  specialiteId String?
   specialite   Specialite? @relation(fields: [specialiteId], references: [id])
+
+  @@index([departmentId])
+  @@index([specialiteId])
 }
 
 model Department {
-  id        Int         @id @default(autoincrement())
-  name      String
-  students  Student[]
+  id          String      @id @default(cuid())
+  name        String      @unique
+  description String?
+  
+  students    Student[]
   specialites Specialite[]
 }
 
 model Specialite {
-  id          Int      @id @default(autoincrement())
-  name        String
-  departmentId Int
-  department  Department @relation(fields: [departmentId], references: [id])
-  students    Student[]
+  id           String     @id @default(cuid())
+  name         String
+  description  String?
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  
+  students     Student[]
 }
