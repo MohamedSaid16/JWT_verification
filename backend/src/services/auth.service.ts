@@ -1,11 +1,6 @@
 import prisma from "../config/database";
-import { hashPassword, comparePasswords, isStrongPassword } from "../utils/password";
-import { 
-  signAccessToken, 
-  signRefreshToken, 
-  hashToken, 
-  generateRawToken 
-} from "../utils/tokens";
+import { hashPassword, comparePasswords, isStrongPassword, generateRandomPassword } from "../utils/password";
+import { signAccessToken, signRefreshToken } from "../utils/tokens";
 import { Role } from "@prisma/client";
 
 export interface RegisterInput {
@@ -14,6 +9,8 @@ export interface RegisterInput {
   firstName: string;
   lastName: string;
   role?: Role;
+  studentId?: string;
+  employeeId?: string;
 }
 
 export interface LoginResponse {
@@ -23,40 +20,220 @@ export interface LoginResponse {
     firstName: string;
     lastName: string;
     role: Role;
+    mustChangePassword?: boolean;
   };
   accessToken: string;
   refreshToken: string;
+  requiresPasswordChange: boolean;
 }
 
 export class AuthServiceError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'AuthServiceError';
+    this.name = "AuthServiceError";
   }
 }
 
-// Register new user
-export const registerUser = async (data: RegisterInput): Promise<LoginResponse> => {
-  // Validate password strength using your function from password.ts
-  if (!isStrongPassword(data.password)) {
+const buildPayload = (user: { id: string; email: string; role: Role }) => ({
+  sub: user.id,
+  email: user.email,
+  role: user.role,
+});
+
+const createSessionTokens = async (user: { id: string; email: string; role: Role }) => {
+  const payload = buildPayload(user);
+  const accessToken = signAccessToken(payload);
+  const refreshToken = signRefreshToken(payload);
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      token: refreshToken,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      revoked: false,
+    },
+  });
+
+  return { accessToken, refreshToken };
+};
+
+export const createUserByAdmin = async (data: {
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: Role;
+  studentId?: string;
+  employeeId?: string;
+  department?: string;
+  title?: string;
+  createdBy?: string;
+}) => {
+  const existingUser = await prisma.user.findUnique({ where: { email: data.email } });
+  if (existingUser) {
+    throw new AuthServiceError("User with this email already exists");
+  }
+
+  const tempPassword = generateRandomPassword(12);
+  const hashedPassword = await hashPassword(tempPassword);
+
+  const user = await prisma.user.create({
+    data: {
+      email: data.email,
+      password: hashedPassword,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      role: data.role,
+      mustChangePassword: true,
+      isActive: true,
+    },
+  });
+
+  if (data.role === Role.STUDENT) {
+    await prisma.student.create({
+      data: {
+        userId: user.id,
+        studentId: data.studentId || `STU${Date.now()}`,
+      },
+    });
+  }
+
+  if (data.role === Role.TEACHER) {
+    await prisma.teacher.create({
+      data: {
+        userId: user.id,
+        employeeId: data.employeeId || `TCH${Date.now()}`,
+        department: data.department,
+        title: data.title,
+      },
+    });
+  }
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.role,
+    },
+    tempPassword,
+  };
+};
+
+export const adminResetPassword = async (adminId: string, targetUserId: string): Promise<string> => {
+  const admin = await prisma.user.findUnique({ where: { id: adminId } });
+  if (!admin || (admin.role !== Role.ADMIN_SUPER && admin.role !== Role.ADMIN_FACULTY)) {
+    throw new AuthServiceError("Unauthorized: Only admins can reset passwords");
+  }
+
+  const targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+  if (!targetUser) {
+    throw new AuthServiceError("User not found");
+  }
+
+  const tempPassword = generateRandomPassword(12);
+  const hashedPassword = await hashPassword(tempPassword);
+
+  await prisma.user.update({
+    where: { id: targetUserId },
+    data: {
+      password: hashedPassword,
+      mustChangePassword: true,
+    },
+  });
+
+  await prisma.refreshToken.updateMany({
+    where: { userId: targetUserId, revoked: false },
+    data: { revoked: true },
+  });
+
+  return tempPassword;
+};
+
+export const loginUser = async (email: string, password: string): Promise<LoginResponse> => {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    include: { student: true, teacher: true },
+  });
+
+  if (!user || !user.isActive) {
+    throw new AuthServiceError("Invalid email or password");
+  }
+
+  const isValidPassword = await comparePasswords(password, user.password);
+  if (!isValidPassword) {
+    throw new AuthServiceError("Invalid email or password");
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLogin: new Date() },
+  });
+
+  const { accessToken, refreshToken } = await createSessionTokens(user);
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.role,
+      mustChangePassword: user.mustChangePassword,
+    },
+    accessToken,
+    refreshToken,
+    requiresPasswordChange: user.mustChangePassword,
+  };
+};
+
+export const changePassword = async (userId: string, currentPassword: string, newPassword: string): Promise<void> => {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    throw new AuthServiceError("User not found");
+  }
+
+  const isValid = await comparePasswords(currentPassword, user.password);
+  if (!isValid) {
+    throw new AuthServiceError("Current password is incorrect");
+  }
+
+  if (!isStrongPassword(newPassword)) {
     throw new AuthServiceError(
-      'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character'
+      "Password must be at least 8 characters and contain uppercase, lowercase, number, and special character"
     );
   }
 
-  // Check if user exists
-  const existingUser = await prisma.user.findUnique({
-    where: { email: data.email },
+  const hashedPassword = await hashPassword(newPassword);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      password: hashedPassword,
+      mustChangePassword: false,
+    },
   });
 
-  if (existingUser) {
-    throw new AuthServiceError('Email already exists');
+  await prisma.refreshToken.updateMany({
+    where: { userId: user.id, revoked: false },
+    data: { revoked: true },
+  });
+};
+
+export const registerUser = async (data: RegisterInput): Promise<LoginResponse> => {
+  if (!isStrongPassword(data.password)) {
+    throw new AuthServiceError(
+      "Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character"
+    );
   }
 
-  // Hash password using your function from password.ts
+  const existingUser = await prisma.user.findUnique({ where: { email: data.email } });
+  if (existingUser) {
+    throw new AuthServiceError("Email already exists");
+  }
+
   const hashedPassword = await hashPassword(data.password);
 
-  // Create user
   const user = await prisma.user.create({
     data: {
       email: data.email,
@@ -64,123 +241,30 @@ export const registerUser = async (data: RegisterInput): Promise<LoginResponse> 
       firstName: data.firstName,
       lastName: data.lastName,
       role: data.role || Role.STUDENT,
+      mustChangePassword: false,
+      isActive: true,
     },
   });
 
-  // Create email verification token using your functions from token.ts
-  const rawToken = generateRawToken();
-  const tokenHash = hashToken(rawToken);
-
-  await prisma.emailVerificationToken.create({
-    data: {
-      userId: user.id,
-      tokenHash,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-    },
-  });
-
-  // Generate tokens using your functions from token.ts
-  const payload = {
-    sub: user.id,
-    email: user.email,
-    role: user.role,
-  };
-
-  const accessToken = signAccessToken(payload);
-  const refreshToken = signRefreshToken(payload);
-
-  // Store refresh token
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      tokenHash: hashToken(refreshToken),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    },
-  });
-
-  // Here you would send an email with verification link
-  console.log(`📧 Verification link: ${process.env.APP_BASE_URL}/api/v1/auth/verify-email/${rawToken}`);
-
-  return {
-    user: {
-      id: user.id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      role: user.role,
-    },
-    accessToken,
-    refreshToken,
-  };
-};
-
-// Login user
-export const loginUser = async (email: string, password: string): Promise<LoginResponse> => {
-  // Find user
-  const user = await prisma.user.findUnique({
-    where: { email },
-  });
-
-  if (!user) {
-    throw new AuthServiceError('Invalid email or password');
-  }
-
-  // Check if account is locked
-  if (user.lockUntil && user.lockUntil > new Date()) {
-    throw new AuthServiceError('Account is locked. Try again later.');
-  }
-
-  // Verify password using your function from password.ts
-  const isValidPassword = await comparePasswords(password, user.password);
-
-  if (!isValidPassword) {
-    // Increment failed attempts
-    const failedAttempts = user.failedLoginAttempts + 1;
-    
-    // Lock account after 5 failed attempts
-    const lockUntil = failedAttempts >= 5 
-      ? new Date(Date.now() + 15 * 60 * 1000) // 15 minutes
-      : null;
-
-    await prisma.user.update({
-      where: { id: user.id },
+  if (user.role === Role.STUDENT) {
+    await prisma.student.create({
       data: {
-        failedLoginAttempts: failedAttempts,
-        lockUntil,
+        userId: user.id,
+        studentId: data.studentId || `STU${Date.now()}`,
       },
     });
-
-    throw new AuthServiceError('Invalid email or password');
   }
 
-  // Reset failed attempts on successful login
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      failedLoginAttempts: 0,
-      lockUntil: null,
-      lastLogin: new Date(),
-    },
-  });
+  if (user.role === Role.TEACHER) {
+    await prisma.teacher.create({
+      data: {
+        userId: user.id,
+        employeeId: data.employeeId || `TCH${Date.now()}`,
+      },
+    });
+  }
 
-  // Generate tokens using your functions from token.ts
-  const payload = {
-    sub: user.id,
-    email: user.email,
-    role: user.role,
-  };
-
-  const accessToken = signAccessToken(payload);
-  const refreshToken = signRefreshToken(payload);
-
-  // Store refresh token
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      tokenHash: hashToken(refreshToken),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    },
-  });
+  const { accessToken, refreshToken } = await createSessionTokens(user);
 
   return {
     user: {
@@ -192,133 +276,64 @@ export const loginUser = async (email: string, password: string): Promise<LoginR
     },
     accessToken,
     refreshToken,
+    requiresPasswordChange: false,
   };
 };
 
-// Refresh tokens
 export const refreshTokens = async (refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> => {
-  try {
-    // Verify refresh token using jwt directly since verify function isn't in token.ts
-    const jwt = require('jsonwebtoken');
-    const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    
-    // Hash token for database lookup
-    const tokenHash = hashToken(refreshToken);
+  const jwt = require("jsonwebtoken");
+  const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
 
-    // Check if token exists and is not revoked
-    const storedToken = await prisma.refreshToken.findFirst({
-      where: {
-        tokenHash,
-        userId: payload.sub,
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-    });
-
-    if (!storedToken) {
-      throw new AuthServiceError('Invalid refresh token');
-    }
-
-    // Revoke old token
-    await prisma.refreshToken.update({
-      where: { id: storedToken.id },
-      data: { revokedAt: new Date() },
-    });
-
-    // Generate new tokens
-    const newAccessToken = signAccessToken(payload);
-    const newRefreshToken = signRefreshToken(payload);
-
-    // Store new refresh token
-    await prisma.refreshToken.create({
-      data: {
-        userId: payload.sub,
-        tokenHash: hashToken(newRefreshToken),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      },
-    });
-
-    return {
-      accessToken: newAccessToken,
-      refreshToken: newRefreshToken,
-    };
-  } catch (error) {
-    throw new AuthServiceError('Invalid refresh token');
-  }
-};
-
-// Logout user
-export const logoutUser = async (refreshToken: string): Promise<void> => {
-  const tokenHash = hashToken(refreshToken);
-
-  await prisma.refreshToken.updateMany({
-    where: { tokenHash },
-    data: { revokedAt: new Date() },
-  });
-};
-
-// Verify email
-export const verifyEmail = async (token: string): Promise<void> => {
-  const tokenHash = hashToken(token);
-
-  const verificationToken = await prisma.emailVerificationToken.findUnique({
-    where: { tokenHash },
-    include: { user: true },
-  });
-
-  if (!verificationToken || verificationToken.expiresAt < new Date()) {
-    throw new AuthServiceError('Invalid or expired verification token');
-  }
-
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: verificationToken.userId },
-      data: { emailVerified: true },
-    }),
-    prisma.emailVerificationToken.delete({
-      where: { id: verificationToken.id },
-    }),
-  ]);
-};
-
-// Resend verification email
-export const resendVerification = async (email: string): Promise<void> => {
-  const user = await prisma.user.findUnique({
-    where: { email },
-    include: { emailVerification: true },
-  });
-
-  if (!user) {
-    throw new AuthServiceError('User not found');
-  }
-
-  if (user.emailVerified) {
-    throw new AuthServiceError('Email already verified');
-  }
-
-  // Delete old verification token
-  if (user.emailVerification) {
-    await prisma.emailVerificationToken.delete({
-      where: { id: user.emailVerification.id },
-    });
-  }
-
-  // Create new verification token
-  const rawToken = generateRawToken();
-  const tokenHash = hashToken(rawToken);
-
-  await prisma.emailVerificationToken.create({
-    data: {
-      userId: user.id,
-      tokenHash,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  const storedToken = await prisma.refreshToken.findFirst({
+    where: {
+      token: refreshToken,
+      userId: payload.sub,
+      revoked: false,
+      expiresAt: { gt: new Date() },
     },
   });
 
-  console.log(`📧 New verification link: ${process.env.APP_BASE_URL}/api/v1/auth/verify-email/${rawToken}`);
+  if (!storedToken) {
+    throw new AuthServiceError("Invalid refresh token");
+  }
+
+  await prisma.refreshToken.update({
+    where: { id: storedToken.id },
+    data: { revoked: true },
+  });
+
+  const accessToken = signAccessToken(payload);
+  const nextRefreshToken = signRefreshToken(payload);
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: payload.sub,
+      token: nextRefreshToken,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      revoked: false,
+    },
+  });
+
+  return { accessToken, refreshToken: nextRefreshToken };
 };
 
-// Get user by ID
+export const logoutUser = async (refreshToken: string): Promise<void> => {
+  await prisma.refreshToken.updateMany({
+    where: { token: refreshToken },
+    data: { revoked: true },
+  });
+};
+
+export const verifyEmail = async (_token: string): Promise<void> => {
+  // Email verification table is not part of the current schema.
+  return;
+};
+
+export const resendVerification = async (_email: string): Promise<void> => {
+  // Email verification table is not part of the current schema.
+  return;
+};
+
 export const getUserById = async (userId: string) => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -328,20 +343,16 @@ export const getUserById = async (userId: string) => {
       firstName: true,
       lastName: true,
       role: true,
-      emailVerified: true,
+      mustChangePassword: true,
       lastLogin: true,
       createdAt: true,
-      student: {
-        include: {
-          department: true,
-          specialite: true,
-        },
-      },
+      student: true,
+      teacher: true,
     },
   });
 
   if (!user) {
-    throw new AuthServiceError('User not found');
+    throw new AuthServiceError("User not found");
   }
 
   return user;

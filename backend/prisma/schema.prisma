@@ -7,6 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ==================== ENUMS ====================
 enum Role {
   STUDENT
   DELEGATE
@@ -20,84 +21,70 @@ enum Role {
   COMMITTEE_PRESIDENT
 }
 
+// ==================== CORE USER MODEL ====================
 model User {
-  id                   String   @id @default(cuid())
-  email                String   @unique
-  password             String
-  firstName            String
-  lastName             String
-  role                 Role     @default(STUDENT)
-  
-  // Relations
-  student              Student?
-  tokens               RefreshToken[]
-  emailVerification    EmailVerificationToken?
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  password           String
+  firstName          String
+  lastName           String
+  role               Role      @default(STUDENT)
+  isActive           Boolean   @default(true)
+  mustChangePassword Boolean   @default(false)
+  lastLogin          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  // Security fields
-  emailVerified        Boolean  @default(false)
-  failedLoginAttempts  Int      @default(0)
-  lockUntil            DateTime?
-  lastLogin            DateTime?
-
-  // Timestamps
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  // Relations - Simplified
+  refreshTokens  RefreshToken[]
+  passwordResets PasswordReset[]
+  student        Student?
+  teacher        Teacher?
 }
 
+// ==================== AUTHENTICATION MODELS ====================
 model RefreshToken {
-  id                String   @id @default(cuid())
-  userId            String
-  tokenHash         String   @unique
-  expiresAt         DateTime
-  revokedAt         DateTime?
-  createdAt         DateTime @default(now())
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
 
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([tokenHash])
+  @@index([token])
 }
 
-model EmailVerificationToken {
-  id         String   @id @default(cuid())
-  userId     String   @unique
-  tokenHash  String   @unique
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
+model PasswordReset {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
 
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+// ==================== SIMPLE PROFILES ====================
 model Student {
-  id           String    @id @default(cuid())
-  userId       String    @unique
-  user         User      @relation(fields: [userId], references: [id])
-
-  departmentId String?
-  department   Department? @relation(fields: [departmentId], references: [id])
-
-  specialiteId String?
-  specialite   Specialite? @relation(fields: [specialiteId], references: [id])
-
-  @@index([departmentId])
-  @@index([specialiteId])
+  id         String  @id @default(cuid())
+  userId     String  @unique
+  user       User    @relation(fields: [userId], references: [id])
+  studentId  String  @unique
+  level      String?
+  group      String?
+  department String?
+  specialite String?
 }
 
-model Department {
-  id          String      @id @default(cuid())
-  name        String      @unique
-  description String?
-  
-  students    Student[]
-  specialites Specialite[]
-}
-
-model Specialite {
-  id           String     @id @default(cuid())
-  name         String
-  description  String?
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id])
-  
-  students     Student[]
+model Teacher {
+  id         String  @id @default(cuid())
+  userId     String  @unique
+  user       User    @relation(fields: [userId], references: [id])
+  employeeId String  @unique
+  department String?
+  title      String?
 }
